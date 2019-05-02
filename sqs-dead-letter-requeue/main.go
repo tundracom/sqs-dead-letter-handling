@@ -84,6 +84,7 @@ func requeueMessage(conn *sqs.SQS, sourceQueueURL *sqs.GetQueueUrlOutput, destin
 	respAdd, errAdd := conn.SendMessage(&sqs.SendMessageInput{
 		MessageAttributes: message.MessageAttributes,
 		MessageBody:       message.Body,
+		MessageGroupId:    message.Attributes["MessageGroupId"],
 		QueueUrl:          destinationQueueURL.QueueUrl})
 	if errAdd != nil {
 		panic(errAdd)
