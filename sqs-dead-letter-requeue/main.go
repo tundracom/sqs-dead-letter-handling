@@ -1,21 +1,37 @@
-package main // import "github.com/Jimdo/sqs-dead-letter-requeue"
+package main
 
 import (
-	"log"
-	"os"
-	"strconv"
-
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/sqs"
 	"gopkg.in/alecthomas/kingpin.v1"
+	"log"
+	"os"
+	"sort"
+	"strconv"
 )
 
 var (
-	app           = kingpin.New("dead-letter-requeue", "Requeues messages from a SQS dead-letter queue to the active one.")
-	queueName     = app.Arg("destination-queue-name", "Name of the destination SQS queue (e.g. prod-mgmt-website-data-www100-jimdo-com).").Required().String()
-	fromQueueName = app.Flag("source-queue-name", "Name of the source SQS queue (e.g. prod-mgmt-website-data-www100-jimdo-com-dead-letter).").String()
+	app           = kingpin.New("dead-letter-requeue", "Requeue messages from a SQS dead-letter queue to the active one.")
+	queueName     = app.Arg("destination-queue-name", "Name of the destination SQS queue (e.g. buy-worker).").Required().String()
+	fromQueueName = app.Flag("source-queue-name", "Name of the source SQS queue (e.g. buy-worker-dead-letter).").String()
 	accountID     = app.Flag("account-id", "AWS account ID. (e.g. 123456789)").String()
 )
+
+type byTimestamp []*sqs.Message
+
+func extractAwsTimestamp(m *sqs.Message) int64 {
+	ts := m.Attributes["SentTimestamp"]
+	i, err := strconv.ParseInt(*ts, 10, 64)
+	if err != nil {
+		panic(err)
+	}
+	return i
+}
+
+func (a byTimestamp) Len() int           { return len(a) }
+func (a byTimestamp) Less(i, j int) bool { return extractAwsTimestamp(a[i]) < extractAwsTimestamp(a[j]) }
+func (a byTimestamp) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 
 func getQueueUrlnput(queueName *string, accountID *string) *sqs.GetQueueUrlInput {
 	var getQueueURLInput sqs.GetQueueUrlInput
@@ -29,6 +45,63 @@ func getQueueUrlnput(queueName *string, accountID *string) *sqs.GetQueueUrlInput
 	return &getQueueURLInput
 }
 
+// collect all the messages from the queue, relying on the visibility timeout
+// IMPORTANT the sequence is not ordered!
+func readQueue(conn *sqs.SQS, sourceQueueURL *sqs.GetQueueUrlOutput) []*sqs.Message {
+	var messages []*sqs.Message
+
+	waitTimeSeconds := int64(20)
+	maxNumberOfMessages := int64(10)
+	// in seconds, set to a minute, then won't appear in the loop
+	visibilityTimeout := int64(60)
+
+	for {
+		resp, err := conn.ReceiveMessage(&sqs.ReceiveMessageInput{
+			AttributeNames:      aws.StringSlice([]string{"All"}),
+			WaitTimeSeconds:     &waitTimeSeconds,
+			MaxNumberOfMessages: &maxNumberOfMessages,
+			VisibilityTimeout:   &visibilityTimeout,
+			QueueUrl:            sourceQueueURL.QueueUrl})
+
+		if err != nil {
+			log.Fatal(err)
+			// return with empty array of messages in case of failure
+			return []*sqs.Message{}
+		}
+
+		numberOfMessagesRead := len(resp.Messages)
+		if numberOfMessagesRead == 0 {
+			return messages
+		}
+
+		log.Printf("Collecting %v messages", numberOfMessagesRead)
+		messages = append(messages, resp.Messages...)
+	}
+	return messages
+}
+
+func requeueMessage(conn *sqs.SQS, sourceQueueURL *sqs.GetQueueUrlOutput, destinationQueueURL *sqs.GetQueueUrlOutput, message *sqs.Message) {
+	respAdd, errAdd := conn.SendMessage(&sqs.SendMessageInput{
+		MessageAttributes: message.MessageAttributes,
+		MessageBody:       message.Body,
+		QueueUrl:          destinationQueueURL.QueueUrl})
+	if errAdd != nil {
+		panic(errAdd)
+	}
+	log.Printf("Requeued message [%s] -> [%s] to [%s]", *message.MessageId, *respAdd.MessageId, *destinationQueueURL.QueueUrl)
+
+	// remove it from the source queue
+	_, errDel := conn.DeleteMessage(&sqs.DeleteMessageInput{
+		QueueUrl:      sourceQueueURL.QueueUrl,
+		ReceiptHandle: message.ReceiptHandle,
+	})
+	if errDel != nil {
+		log.Fatal(errDel)
+	} else {
+		log.Printf("Removed message [%s] from [%s]", *message.MessageId, *sourceQueueURL.QueueUrl)
+	}
+}
+
 func main() {
 	kingpin.MustParse(app.Parse(os.Args[1:]))
 
@@ -38,15 +111,17 @@ func main() {
 	if *fromQueueName != "" {
 		sourceQueueName = *fromQueueName
 	} else {
-		sourceQueueName = destinationQueueName + "_dead_letter"
+		sourceQueueName = destinationQueueName + "-dead-letter"
 	}
+
+	log.Printf("Source queue [%s] ", sourceQueueName)
+	log.Printf("Destination queue [%s] ", destinationQueueName)
 
 	sess, err := session.NewSession()
 	if err != nil {
 		log.Fatal(err)
 		return
 	}
-
 	conn := sqs.New(sess)
 
 	sourceQueueURL, err := conn.GetQueueUrl(getQueueUrlnput(&sourceQueueName, accountID))
@@ -54,7 +129,6 @@ func main() {
 		log.Fatal(err)
 		return
 	}
-
 	destinationQueueURL, err := conn.GetQueueUrl(getQueueUrlnput(&destinationQueueName, accountID))
 	if err != nil {
 		log.Fatal(err)
@@ -62,65 +136,24 @@ func main() {
 	}
 
 	log.Printf("Looking for messages to requeue.")
-	for {
-		waitTimeSeconds := int64(20)
-		maxNumberOfMessages := int64(10)
-		visibilityTimeout := int64(20)
+	messages := readQueue(conn, sourceQueueURL)
+	numberOfMessages := len(messages)
+	log.Printf("Found [%v] messages to requeue", numberOfMessages)
 
-		resp, err := conn.ReceiveMessage(&sqs.ReceiveMessageInput{
-			WaitTimeSeconds:     &waitTimeSeconds,
-			MaxNumberOfMessages: &maxNumberOfMessages,
-			VisibilityTimeout:   &visibilityTimeout,
-			QueueUrl:            sourceQueueURL.QueueUrl})
+	// sort by order of arrival
+	sort.Sort(byTimestamp(messages))
 
-		if err != nil {
-			log.Fatal(err)
+	for index, element := range messages {
+		log.Printf("Message[%v] [%s]", index, *element.MessageId)
+	}
+
+	for index, element := range messages {
+		if index > 0 {
+			// TODO: just for testing
 			return
 		}
-
-		messages := resp.Messages
-		numberOfMessages := len(messages)
-		if numberOfMessages == 0 {
-			log.Printf("Requeuing messages done.")
-			return
-		}
-
-		log.Printf("Moving %v message(s)...", numberOfMessages)
-
-		var sendMessageBatchRequestEntries []*sqs.SendMessageBatchRequestEntry
-		for index, element := range messages {
-			i := strconv.Itoa(index)
-
-			sendMessageBatchRequestEntries = append(sendMessageBatchRequestEntries, &sqs.SendMessageBatchRequestEntry{
-				Id:          &i,
-				MessageBody: element.Body})
-		}
-
-		_, err = conn.SendMessageBatch(&sqs.SendMessageBatchInput{
-			Entries:  sendMessageBatchRequestEntries,
-			QueueUrl: destinationQueueURL.QueueUrl})
-
-		if err != nil {
-			log.Fatal(err)
-			return
-		}
-
-		var deleteMessageBatchRequestEntries []*sqs.DeleteMessageBatchRequestEntry
-		for index, element := range messages {
-			i := strconv.Itoa(index)
-
-			deleteMessageBatchRequestEntries = append(deleteMessageBatchRequestEntries, &sqs.DeleteMessageBatchRequestEntry{
-				Id:            &i,
-				ReceiptHandle: element.ReceiptHandle})
-		}
-
-		_, err = conn.DeleteMessageBatch(&sqs.DeleteMessageBatchInput{
-			Entries:  deleteMessageBatchRequestEntries,
-			QueueUrl: sourceQueueURL.QueueUrl})
-
-		if err != nil {
-			log.Fatal(err)
-			return
-		}
+		log.Printf("Requeue message[%v] [%s]", index, *element.MessageId)
+		requeueMessage(conn, sourceQueueURL, destinationQueueURL, element)
+		log.Printf("Requeue succeeded for message[%v] [%s]", index, *element.MessageId)
 	}
 }
