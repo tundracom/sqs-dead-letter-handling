@@ -156,7 +156,12 @@ func main() {
 		if index >= *messageLimit {
 			return
 		}
-		log.Printf("Requeue message[%v] [%s]", index, *element.MessageId)
+		log.Println()
+		messageType := "unknown"
+		if element.MessageAttributes["Type"] != nil {
+			messageType = *element.MessageAttributes["Type"].StringValue
+		}
+		log.Printf("Requeue message[%v] [%s] type -> %s", index, *element.MessageId, messageType)
 		requeueMessage(conn, sourceQueueURL, destinationQueueURL, element)
 		log.Printf("Requeue succeeded for message[%v] [%s]", index, *element.MessageId)
 	}
