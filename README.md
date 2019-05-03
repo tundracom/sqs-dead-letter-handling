@@ -3,6 +3,7 @@
 Binaries for handling SQS Dead Letter Queues:
 
 * sqs-dead-letter-requeue: Requeue all messages from dead letter queue to related active queue
+* maintains the FIFO order, regardless of the queue type (standard, FIFO), oldest messages are being re-queued first
 
 ## Requirements
 
@@ -26,5 +27,13 @@ export AWS_SECRET_ACCESS_KEY=<my-secret-key>
 
 ### sqs-dead-letter-requeue
 ```sh
-bin/sqs-dead-letter-requeue prod-mgmt-website-data-www101-jimdo-com
+bin/sqs-dead-letter-requeue --source-queue-name=buy-worker-dead-letter buy-worker
+
+# only one message
+bin/sqs-dead-letter-requeue --messages=1 --source-queue-name=buy-worker-dead-letter buy-worker
+```
+
+### Test messages on the dead letter queue
+```sh
+aws sqs send-message --queue-url=https://eu-west-1.queue.amazonaws.com/429416768433/buy-worker-dead-letter --message-body='{"storeUri":"velo"}' --message-attributes='{ "Type": {"DataType": "String", "StringValue": "vox.buy.worker.controller.search.ReindexStoreMessage"} }'
 ```
