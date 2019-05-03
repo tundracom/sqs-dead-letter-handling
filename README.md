@@ -33,7 +33,13 @@ bin/sqs-dead-letter-requeue --source-queue-name=buy-worker-dead-letter buy-worke
 bin/sqs-dead-letter-requeue --messages=1 --source-queue-name=buy-worker-dead-letter buy-worker
 ```
 
-### Test messages on the dead letter queue
+### Send test messages on the dead letter queue
 ```sh
+# reindex a store
 aws sqs send-message --queue-url=https://eu-west-1.queue.amazonaws.com/429416768433/buy-worker-dead-letter --message-body='{"storeUri":"velo"}' --message-attributes='{ "Type": {"DataType": "String", "StringValue": "vox.buy.worker.controller.search.ReindexStoreMessage"} }'
+```
+
+```sh
+# set shipment status to verified
+aws sqs send-message --queue-url=https://eu-west-1.queue.amazonaws.com/429416768433/shipment-execution-dead-letter.fifo --message-body='{"shipmentId":"2160693-01","userId":"2150868","event":{"_":"vox.buy.model.TundraEvent$Verify"}}' --message-attributes='{ "Type": {"DataType": "String", "StringValue": "vox.buy.model.ShipmentEventMessage"} }' --message-group-id=2
 ```
