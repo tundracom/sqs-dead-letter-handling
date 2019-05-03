@@ -16,6 +16,7 @@ var (
 	queueName     = app.Arg("destination-queue-name", "Name of the destination SQS queue (e.g. buy-worker).").Required().String()
 	fromQueueName = app.Flag("source-queue-name", "Name of the source SQS queue (e.g. buy-worker-dead-letter).").String()
 	accountID     = app.Flag("account-id", "AWS account ID. (e.g. 123456789)").String()
+	messageLimit  = app.Flag("messages", "messages to process").Int()
 )
 
 type byTimestamp []*sqs.Message
@@ -35,13 +36,11 @@ func (a byTimestamp) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 
 func getQueueUrlnput(queueName *string, accountID *string) *sqs.GetQueueUrlInput {
 	var getQueueURLInput sqs.GetQueueUrlInput
-
 	if *accountID != "" {
 		getQueueURLInput = sqs.GetQueueUrlInput{QueueName: queueName, QueueOwnerAWSAccountId: accountID}
 	} else {
 		getQueueURLInput = sqs.GetQueueUrlInput{QueueName: queueName}
 	}
-
 	return &getQueueURLInput
 }
 
@@ -115,8 +114,12 @@ func main() {
 		sourceQueueName = destinationQueueName + "-dead-letter"
 	}
 
+	if messageLimit == nil || *messageLimit == 0 {
+		*messageLimit = 100
+	}
 	log.Printf("Source queue [%s] ", sourceQueueName)
 	log.Printf("Destination queue [%s] ", destinationQueueName)
+	log.Printf("Messages to process [%v] ", *messageLimit)
 
 	sess, err := session.NewSession()
 	if err != nil {
@@ -149,8 +152,7 @@ func main() {
 	}
 
 	for index, element := range messages {
-		if index > 0 {
-			// TODO: just for testing
+		if index >= *messageLimit {
 			return
 		}
 		log.Printf("Requeue message[%v] [%s]", index, *element.MessageId)
