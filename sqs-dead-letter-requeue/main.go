@@ -56,11 +56,12 @@ func readQueue(conn *sqs.SQS, sourceQueueURL *sqs.GetQueueUrlOutput) []*sqs.Mess
 
 	for {
 		resp, err := conn.ReceiveMessage(&sqs.ReceiveMessageInput{
-			AttributeNames:      aws.StringSlice([]string{"All"}),
-			WaitTimeSeconds:     &waitTimeSeconds,
-			MaxNumberOfMessages: &maxNumberOfMessages,
-			VisibilityTimeout:   &visibilityTimeout,
-			QueueUrl:            sourceQueueURL.QueueUrl})
+			AttributeNames:        aws.StringSlice([]string{"All"}),
+			MessageAttributeNames: aws.StringSlice([]string{"All"}),
+			WaitTimeSeconds:       &waitTimeSeconds,
+			MaxNumberOfMessages:   &maxNumberOfMessages,
+			VisibilityTimeout:     &visibilityTimeout,
+			QueueUrl:              sourceQueueURL.QueueUrl})
 
 		if err != nil {
 			log.Fatal(err)
