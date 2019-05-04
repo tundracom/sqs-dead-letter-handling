@@ -116,7 +116,7 @@ func main() {
 	}
 
 	if messageLimit == nil || *messageLimit == 0 {
-		*messageLimit = 100000
+		*messageLimit = 100
 	}
 	log.Printf("Source queue [%s] ", sourceQueueName)
 	log.Printf("Destination queue [%s] ", destinationQueueName)
