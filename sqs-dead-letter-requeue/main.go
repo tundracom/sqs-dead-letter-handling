@@ -1,4 +1,4 @@
-package main
+package main // import "github.com/tundradotcom/sqs-dead-letter-requeue"
 
 import (
 	"github.com/aws/aws-sdk-go/aws"
