@@ -9,9 +9,12 @@ Binaries for handling SQS Dead Letter Queues:
 
 * Golang
 
-## Building it
+## Building and publishing
+```sh
+make
+```
 
-### sqs-dead-letter-requeue
+### Compiling it
 ```sh
 go build -o bin/sqs-dead-letter-requeue sqs-dead-letter-requeue/main.go
 ```
