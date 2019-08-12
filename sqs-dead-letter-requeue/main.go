@@ -46,7 +46,7 @@ func getQueueUrlnput(queueName *string, accountID *string) *sqs.GetQueueUrlInput
 
 // collect all the messages from the queue, relying on the visibility timeout
 // IMPORTANT the sequence is not ordered!
-func readQueue(conn *sqs.SQS, sourceQueueURL *sqs.GetQueueUrlOutput) []*sqs.Message {
+func readQueue(conn *sqs.SQS, sourceQueueURL *sqs.GetQueueUrlOutput, messageLimit int) []*sqs.Message {
 	var messages []*sqs.Message
 
 	waitTimeSeconds := int64(20)
@@ -54,7 +54,7 @@ func readQueue(conn *sqs.SQS, sourceQueueURL *sqs.GetQueueUrlOutput) []*sqs.Mess
 	// in seconds, set to a minute, then won't appear in the loop
 	visibilityTimeout := int64(60)
 
-	for {
+	for i := 0; i < messageLimit; {
 		resp, err := conn.ReceiveMessage(&sqs.ReceiveMessageInput{
 			AttributeNames:        aws.StringSlice([]string{"All"}),
 			MessageAttributeNames: aws.StringSlice([]string{"All"}),
@@ -76,6 +76,8 @@ func readQueue(conn *sqs.SQS, sourceQueueURL *sqs.GetQueueUrlOutput) []*sqs.Mess
 
 		log.Printf("Collecting %v messages", numberOfMessagesRead)
 		messages = append(messages, resp.Messages...)
+
+		i += numberOfMessagesRead
 	}
 	return messages
 }
@@ -141,7 +143,7 @@ func main() {
 	}
 
 	log.Printf("Looking for messages to requeue.")
-	messages := readQueue(conn, sourceQueueURL)
+	messages := readQueue(conn, sourceQueueURL, *messageLimit)
 	numberOfMessages := len(messages)
 	log.Printf("Found [%v] messages to requeue", numberOfMessages)
 
@@ -154,6 +156,7 @@ func main() {
 
 	for index, element := range messages {
 		if index >= *messageLimit {
+			log.Printf("\n_____________________________\nProcessed %v messages", *messageLimit)
 			return
 		}
 		log.Println()
